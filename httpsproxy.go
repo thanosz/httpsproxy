@@ -28,12 +28,31 @@ import (
 	"flag"
 	"io"
 	"log"
+	"log/syslog"
 	"net"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
+	"strings"
 	"time"
 )
 
+var version = "2.1.3"
+var logger *log.Logger
+
+func init() {
+	sysLogger, err := syslog.New(syslog.LOG_INFO|syslog.LOG_DAEMON, "httpsproxy")
+	if err != nil {
+		log.Fatalf("Failed to connect to syslog: %v", err)
+	}
+	logger = log.New(sysLogger, "", 0)
+	logger.Printf("Version: %s", version)
+	logger.Printf("Intialized logger")
+}
+
 func handleTunneling(w http.ResponseWriter, r *http.Request) {
+	logger.Printf("Received PROXY request: %s %s from %s ", r.Method, r.RequestURI, r.RemoteAddr)
+	//dest_conn, err := net.DialTimeout("tcp", r.Host, 10*time.Second)
 	dest_conn, err := net.DialTimeout("tcp", "10.11.12.5:2222", 10*time.Second)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
@@ -52,13 +71,58 @@ func handleTunneling(w http.ResponseWriter, r *http.Request) {
 	go transfer(dest_conn, client_conn)
 	go transfer(client_conn, dest_conn)
 }
+
 func transfer(destination io.WriteCloser, source io.ReadCloser) {
 	defer destination.Close()
 	defer source.Close()
 	io.Copy(destination, source)
 }
+
 func handleHTTP(w http.ResponseWriter, req *http.Request) {
-	http.Error(w, "go away", http.StatusForbidden)
+	dest := "https://10.11.12.5:4433"
+	targetURL, err := url.Parse(dest)
+	if err != nil {
+		logger.Printf("Failed to parse target URL: %v", err)
+	}
+
+	// Check if host contains vega.rugad.eu
+	if strings.Contains(req.Host, "vega.rugad.eu") {
+		logger.Printf("Request from vega: %s %s from %s", req.Method, req.RequestURI, req.RemoteAddr)
+
+		// Create a reverse proxy using the original request's host (no rewrite)
+		vegaURL := &url.URL{
+			Scheme: "https",
+			Host:   req.Host,
+		}
+		proxy := httputil.NewSingleHostReverseProxy(vegaURL)
+		proxy.Transport = &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		}
+		proxy.ServeHTTP(w, req)
+		return
+	}
+
+	// Check the request URI
+	if strings.HasPrefix(req.RequestURI, "/start-the-secret-web-ssh") ||
+		strings.HasPrefix(req.RequestURI, "/static/css/") ||
+		strings.HasPrefix(req.RequestURI, "/static/js/") {
+
+		logger.Printf("Request redirected: %s %s from %s to %s ", req.Method, req.RequestURI, req.RemoteAddr, dest)
+
+		// Create a reverse proxy for redirection with HTTPS settings
+		proxy := httputil.NewSingleHostReverseProxy(targetURL)
+
+		// Configure the proxy to skip certificate verification (only for local development)
+		proxy.Transport = &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		}
+		// Use the reverse proxy to forward the request
+		req.URL.Path = strings.TrimPrefix(req.URL.Path, "/start-the-secret-web-ssh")
+		proxy.ServeHTTP(w, req)
+	} else {
+		http.Error(w, "go away", http.StatusForbidden)
+		logger.Printf("Request Denied: %s %s from %s", req.Method, req.RequestURI, req.RemoteAddr)
+	}
 }
 
 func copyHeader(dst, src http.Header) {
@@ -67,8 +131,8 @@ func copyHeader(dst, src http.Header) {
 			dst.Add(k, v)
 		}
 	}
-
 }
+
 func main() {
 	var pemPath string
 	flag.StringVar(&pemPath, "pem", "server.crt", "path to pem file")
@@ -78,7 +142,7 @@ func main() {
 	flag.StringVar(&proto, "proto", "https", "Proxy protocol (http or https)")
 	flag.Parse()
 	if proto != "http" && proto != "https" {
-		log.Fatal("Protocol must be either http or https")
+		logger.Fatal("Protocol must be either http or https")
 	}
 	server := &http.Server{
 		Addr: ":61200",
@@ -91,10 +155,13 @@ func main() {
 		}),
 		// Disable HTTP/2.
 		TLSNextProto: make(map[string]func(*http.Server, *tls.Conn, http.Handler)),
+		ErrorLog:     logger,
 	}
 	if proto == "http" {
-		log.Fatal(server.ListenAndServe())
+		logger.Print("Starting HTTP")
+		logger.Print(server.ListenAndServe())
 	} else {
-		log.Fatal(server.ListenAndServeTLS(pemPath, keyPath))
+		logger.Print("Starting HTTPs")
+		logger.Print(server.ListenAndServeTLS(pemPath, keyPath))
 	}
 }

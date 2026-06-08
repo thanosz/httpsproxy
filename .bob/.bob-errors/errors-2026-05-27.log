@@ -1,0 +1,15 @@
+
+================================================================================
+ERROR LOGGED: 2026-05-27T11:13:01.085Z
+================================================================================
+Error Name: Error
+Error Message: Connection failed for 'IBM watsonx.data MCP Server': fetch failed
+
+Stack Trace:
+Error: Connection failed for 'IBM watsonx.data MCP Server': fetch failed
+    at $lr (file:///opt/homebrew/lib/node_modules/bobshell/bundle/bob.js:3480:10291)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async zwe.connect (file:///opt/homebrew/lib/node_modules/bobshell/bundle/bob.js:3480:13137)
+    at async file:///opt/homebrew/lib/node_modules/bobshell/bundle/bob.js:3480:17293
+================================================================================
+
