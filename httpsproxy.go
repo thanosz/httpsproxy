@@ -26,7 +26,6 @@ package main
 import (
 	"crypto/tls"
 	"flag"
-	"fmt"
 	"io"
 	"log"
 	"log/syslog"
@@ -84,73 +83,70 @@ func handleHTTP(w http.ResponseWriter, req *http.Request) {
 	//log the http request host
 	logger.Printf("Request to %s -> %s ", req.Host, req.RequestURI)
 
-	if req.TLS == nil {
-		// Check if host contains -nafpaktias
-		if strings.Contains(req.Host, "-nafpaktias") {
-			logger.Printf("Redirecting request to 10.11.12.24")
+	if strings.Contains(req.Host, "-nafpaktias") {
+		/*logger.Printf("Redirecting request to https to http")
 
-			// Create a reverse proxy to redirect to 10.11.12.24
-			nafpaktiasURL := &url.URL{
-				Scheme: "http",
-				Host:   "10.11.12.24",
-			}
-			proxy := httputil.NewSingleHostReverseProxy(nafpaktiasURL)
-			//proxy.Transport = &http.Transport{
-			//	TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-			//}
-			proxy.ServeHTTP(w, req)
-			return
-		}
-	} else {
+		// Build the redirect URL
+		redirectURL := fmt.Sprintf("http://%s%s", req.Host, req.RequestURI)
+		http.Redirect(w, req, redirectURL, http.StatusMovedPermanently) // 301
+		return*/
 
-		if strings.Contains(req.Host, "-nafpaktias") {
-			logger.Printf("Redirecting request to https to http")
+		logger.Printf("HTTPS -  Redirecting request to 10.11.12.24")
 
-			// Build the redirect URL
-			redirectURL := fmt.Sprintf("http://%s%s", req.Host, req.RequestURI)
-			http.Redirect(w, req, redirectURL, http.StatusMovedPermanently) // 301
-			return
+		// Create a reverse proxy to redirect to 10.11.12.24
+		nafpaktiasURL := &url.URL{
+			Scheme: "http",
+			Host:   "10.11.12.24:8080",
 		}
 
-		// Check if host contains vega.rugad.eu
-		if strings.Contains(req.Host, "vega.rugad.eu") {
-			logger.Printf("Redirecting request to vega")
-
-			// Create a reverse proxy using the original request's host (no rewrite)
-			vegaURL := &url.URL{
-				Scheme: "https",
-				Host:   req.Host,
-			}
-			proxy := httputil.NewSingleHostReverseProxy(vegaURL)
-			proxy.Transport = &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-			}
-			proxy.ServeHTTP(w, req)
-			return
+		proxy := httputil.NewSingleHostReverseProxy(nafpaktiasURL)
+		proxy.Transport = &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 		}
-
-		// Check the request URI
-		if strings.HasPrefix(req.RequestURI, "/start-the-secret-web-ssh") ||
-			strings.HasPrefix(req.RequestURI, "/static/css/") ||
-			strings.HasPrefix(req.RequestURI, "/static/js/") {
-
-			dest := "https://10.11.12.5:4433"
-			targetURL, _ := url.Parse(dest)
-
-			// Create a reverse proxy for redirection with HTTPS settings
-			proxy := httputil.NewSingleHostReverseProxy(targetURL)
-
-			// Configure the proxy to skip certificate verification (only for local development)
-			proxy.Transport = &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-			}
-			// Use the reverse proxy to forward the request
-			req.URL.Path = strings.TrimPrefix(req.URL.Path, "/start-the-secret-web-ssh")
-			proxy.ServeHTTP(w, req)
-			return
-		}
+		req.Header.Set("X-Forwarded-Proto", "https")
+		proxy.ServeHTTP(w, req)
+		return
 
 	}
+
+	// Check if host contains vega.rugad.eu
+	if strings.Contains(req.Host, "vega.rugad.eu") {
+		logger.Printf("Redirecting request to vega")
+
+		// Create a reverse proxy using the original request's host (no rewrite)
+		vegaURL := &url.URL{
+			Scheme: "https",
+			Host:   req.Host,
+		}
+		proxy := httputil.NewSingleHostReverseProxy(vegaURL)
+		proxy.Transport = &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		}
+		proxy.ServeHTTP(w, req)
+		return
+	}
+
+	// Check the request URI
+	if strings.HasPrefix(req.RequestURI, "/start-the-secret-web-ssh") ||
+		strings.HasPrefix(req.RequestURI, "/static/css/") ||
+		strings.HasPrefix(req.RequestURI, "/static/js/") {
+
+		dest := "https://10.11.12.5:4433"
+		targetURL, _ := url.Parse(dest)
+
+		// Create a reverse proxy for redirection with HTTPS settings
+		proxy := httputil.NewSingleHostReverseProxy(targetURL)
+
+		// Configure the proxy to skip certificate verification (only for local development)
+		proxy.Transport = &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		}
+		// Use the reverse proxy to forward the request
+		req.URL.Path = strings.TrimPrefix(req.URL.Path, "/start-the-secret-web-ssh")
+		proxy.ServeHTTP(w, req)
+		return
+	}
+
 	http.Error(w, "go away", http.StatusForbidden)
 	logger.Printf("Request Denied: %s %s from %s", req.Method, req.RequestURI, req.RemoteAddr)
 }
@@ -186,21 +182,6 @@ func main() {
 		TLSNextProto: make(map[string]func(*http.Server, *tls.Conn, http.Handler)),
 		ErrorLog:     logger,
 	}
-
-	// HTTP server on port 61201
-	httpServer := &http.Server{
-		Addr:     ":61201",
-		Handler:  handler,
-		ErrorLog: logger,
-	}
-
-	// Start HTTP server in a goroutine
-	go func() {
-		logger.Print("Starting HTTP server on :61201")
-		if err := httpServer.ListenAndServe(); err != nil {
-			logger.Printf("HTTP server error: %v", err)
-		}
-	}()
 
 	// Start HTTPS server (blocking)
 	logger.Print("Starting HTTPS server on :61200")
