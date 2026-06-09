@@ -26,6 +26,7 @@ package main
 import (
 	"crypto/tls"
 	"flag"
+	"fmt"
 	"io"
 	"log"
 	"log/syslog"
@@ -37,7 +38,7 @@ import (
 	"time"
 )
 
-var version = "2.2.0"
+var version = "2.2.1"
 var logger *log.Logger
 
 func init() {
@@ -79,17 +80,14 @@ func transfer(destination io.WriteCloser, source io.ReadCloser) {
 }
 
 func handleHTTP(w http.ResponseWriter, req *http.Request) {
-	dest := "https://10.11.12.5:4433"
-	targetURL, err := url.Parse(dest)
-	if err != nil {
-		logger.Printf("Failed to parse target URL: %v", err)
-	}
+
+	//log the http request host
+	logger.Printf("Request to %s -> %s ", req.Host, req.RequestURI)
 
 	if req.TLS == nil {
-
 		// Check if host contains -nafpaktias
 		if strings.Contains(req.Host, "-nafpaktias") {
-			logger.Printf("Request from nafpaktias: %s %s from %s", req.Method, req.RequestURI, req.RemoteAddr)
+			logger.Printf("Redirecting request to 10.11.12.24")
 
 			// Create a reverse proxy to redirect to 10.11.12.24
 			nafpaktiasURL := &url.URL{
@@ -105,9 +103,18 @@ func handleHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 	} else {
 
+		if strings.Contains(req.Host, "-nafpaktias") {
+			logger.Printf("Redirecting request to https to http")
+
+			// Build the redirect URL
+			redirectURL := fmt.Sprintf("http://%s%s", req.Host, req.RequestURI)
+			http.Redirect(w, req, redirectURL, http.StatusMovedPermanently) // 301
+			return
+		}
+
 		// Check if host contains vega.rugad.eu
 		if strings.Contains(req.Host, "vega.rugad.eu") {
-			logger.Printf("Request from vega: %s %s from %s", req.Method, req.RequestURI, req.RemoteAddr)
+			logger.Printf("Redirecting request to vega")
 
 			// Create a reverse proxy using the original request's host (no rewrite)
 			vegaURL := &url.URL{
@@ -127,7 +134,8 @@ func handleHTTP(w http.ResponseWriter, req *http.Request) {
 			strings.HasPrefix(req.RequestURI, "/static/css/") ||
 			strings.HasPrefix(req.RequestURI, "/static/js/") {
 
-			logger.Printf("Request redirected: %s %s from %s to %s ", req.Method, req.RequestURI, req.RemoteAddr, dest)
+			dest := "https://10.11.12.5:4433"
+			targetURL, _ := url.Parse(dest)
 
 			// Create a reverse proxy for redirection with HTTPS settings
 			proxy := httputil.NewSingleHostReverseProxy(targetURL)
