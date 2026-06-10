@@ -1,0 +1,62 @@
+# HTTP Proxy Configuration
+
+# Server settings
+server:
+  # HTTPS server port
+  port: 61200
+  # Path to TLS certificate file
+  cert_file: server.crt
+  # Path to TLS key file
+  key_file: server.key
+
+# Syslog settings
+syslog:
+  # Syslog facility and priority
+  priority: "LOG_INFO|LOG_DAEMON"
+  # Syslog tag/identifier
+  tag: "httpsproxy"
+
+# Proxy settings
+proxy:
+  # Default timeout for TCP connections (in seconds)
+  dial_timeout: 10
+  # Default destination for CONNECT method tunneling
+  tunnel_destination: "10.11.12.5:2222" # leave empty to direct to the requested destination
+
+# Route configurations
+routes:
+  # Nafpaktias route - redirects requests containing "-nafpaktias" in host
+  - name: "star"
+    host_contains: "-star-service.example.com"
+    target_scheme: "http"
+    target_host: "192.168.1.24:8080"
+    insecure_skip_verify: true
+    set_forwarded_proto: true
+
+  # Vega route - redirects requests to vega.rugad.eu
+  - name: "vega"
+    host_contains: "vega.eample.com"
+    target_scheme: "https"
+    # Use original host (no rewrite)
+    use_original_host: true
+    insecure_skip_verify: true
+
+  # Web SSH route - redirects specific URI paths
+  - name: "webssh"
+    uri_prefixes:
+      - "/hidden-webssh"
+      - "/static/css/"
+      - "/static/js/"
+    target_url: "https://webssh:4433"
+    insecure_skip_verify: true
+    # Strip prefix from path
+    strip_prefix: "hidden-webssh"
+
+# Default behavior
+default:
+  # HTTP status code for denied requests
+  denied_status: 403
+  # Message for denied requests
+  denied_message: "go away"
+
+# Made with Bob
