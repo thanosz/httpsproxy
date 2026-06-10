@@ -13,9 +13,6 @@ A flexible, high-performance HTTPS reverse proxy and tunnel server written in Go
 - ⚡ **High Performance** - Built on Go's efficient HTTP server with automatic concurrency
 - 🛡️ **Port Protection** - Prevents multiple instances from binding to the same port
 
-## Version
-
-Current version: **2.2.1**
 
 ## Installation
 
