@@ -350,14 +350,6 @@ Install dependencies:
 go mod download
 ```
 
-## License
-
-[Add your license here]
-
-## Contributing
-
-[Add contribution guidelines here]
-
 ## Credits
 
 Based on concepts from:
