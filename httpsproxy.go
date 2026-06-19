@@ -213,7 +213,6 @@ func initLogger(tag string) {
 }
 
 func handleTunneling(w http.ResponseWriter, r *http.Request) {
-	logger.Printf("Received PROXY request: %s %s from %s ", r.Method, r.RequestURI, r.RemoteAddr)
 	cfg := getConfig()
 	timeout := time.Duration(cfg.Proxy.DialTimeout) * time.Second
 
@@ -223,6 +222,8 @@ func handleTunneling(w http.ResponseWriter, r *http.Request) {
 		destination = r.Host
 		logger.Printf("No tunnel_destination configured, using requested host: %s", destination)
 	}
+
+	logger.Printf("Received PROXY request: %s %s from %s, redirecting to %s", r.Method, r.RequestURI, r.RemoteAddr, destination)
 
 	dest_conn, err := net.DialTimeout("tcp", destination, timeout)
 	if err != nil {
@@ -256,8 +257,6 @@ func handleHTTP(w http.ResponseWriter, req *http.Request) {
 	for _, route := range cfg.Routes {
 		// Check host-based routes
 		if route.HostContains != "" && strings.Contains(req.Host, route.HostContains) {
-			logger.Printf("Accepted: %s %s%s from %s", req.Method, req.Host, req.RequestURI, req.RemoteAddr)
-
 			var targetURL *url.URL
 			if route.UseOriginalHost {
 				targetURL = &url.URL{
@@ -270,6 +269,7 @@ func handleHTTP(w http.ResponseWriter, req *http.Request) {
 					Host:   route.TargetHost,
 				}
 			}
+			logger.Printf("Accepted: %s %s%s from %s, redirecting to %s", req.Method, req.Host, req.RequestURI, req.RemoteAddr, targetURL.Host)
 
 			proxy := httputil.NewSingleHostReverseProxy(targetURL)
 			if route.InsecureSkipVerify {
@@ -288,10 +288,9 @@ func handleHTTP(w http.ResponseWriter, req *http.Request) {
 		if len(route.URIPrefixes) > 0 {
 			for _, prefix := range route.URIPrefixes {
 				if strings.HasPrefix(req.RequestURI, prefix) {
-					logger.Printf("Accepted: %s %s%s from %s", req.Method, req.Host, req.RequestURI, req.RemoteAddr)
-
 					targetURL, _ := url.Parse(route.TargetURL)
 					proxy := httputil.NewSingleHostReverseProxy(targetURL)
+					logger.Printf("Accepted: %s %s%s from %s, redirecting to %s", req.Method, req.Host, req.RequestURI, req.RemoteAddr, targetURL.Host)
 
 					if route.InsecureSkipVerify {
 						proxy.Transport = &http.Transport{
