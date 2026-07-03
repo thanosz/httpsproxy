@@ -3,7 +3,7 @@
 # Server settings
 server:
   # HTTPS server port
-  port: 61200
+  port: 8443
   # Path to TLS certificate file
   cert_file: server.crt
   # Path to TLS key file
@@ -20,43 +20,40 @@ syslog:
 proxy:
   # Default timeout for TCP connections (in seconds)
   dial_timeout: 10
-  # Default destination for CONNECT method tunneling
-  tunnel_destination: "10.11.12.5:2222" # leave empty to direct to the requested destination
+  # Default destination for CONNECT method tunneling (leave empty to use requested host)
+  tunnel_destination: "10.0.0.1:22"
 
 # Route configurations
 routes:
-  # Nafpaktias route - redirects requests containing "-nafpaktias" in host
-  - name: "star"
-    host_contains: "-star-service.example.com"
-    target_scheme: "http"
-    target_host: "192.168.1.24:8080"
-    insecure_skip_verify: true
-    set_forwarded_proto: true
+  # Host-based proxy route
+  - name: "app"
+    host_contains: "app.example.com"
+    tls_termination: true   # backend speaks plain HTTP
+    target_host: "192.168.1.10:8080"
 
-  # Vega route - redirects requests to vega.rugad.eu
-  - name: "vega"
-    host_contains: "vega.eample.com"
-    target_scheme: "https"
-    # Use original host (no rewrite)
+  # Host-based 301 redirect
+  - name: "old-app"
+    host_contains: "old.example.com"
+    redirect_url: "https://app.example.com"
+    redirect_status: 301
+
+  # Host-based proxy with original host passthrough
+  - name: "passthrough"
+    host_contains: "passthrough.example.com"
+    # tls_termination: false (default) — backend speaks HTTPS
     use_original_host: true
-    insecure_skip_verify: true
 
-  # Web SSH route - redirects specific URI paths
-  - name: "webssh"
-    uri_prefixes:
-      - "/hidden-webssh"
-      - "/static/css/"
-      - "/static/js/"
-    target_url: "https://webssh:4433"
-    insecure_skip_verify: true
-    # Strip prefix from path
-    strip_prefix: "hidden-webssh"
+  # Host-based proxy to internal service
+  - name: "monitor"
+    host_contains: "monitor.example.com"
+    tls_termination: true   # backend speaks plain HTTP
+    target_host: "192.168.1.1:8080"
 
 # Default behavior
 default:
   # HTTP status code for denied requests
   denied_status: 403
   # Message for denied requests
-  denied_message: "go away"
+  denied_message: "Forbidden"
 
 # Made with Bob
