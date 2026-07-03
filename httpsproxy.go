@@ -78,16 +78,12 @@ type ProxyConfig struct {
 }
 
 type RouteConfig struct {
-	Name               string   `yaml:"name"`
-	HostContains       string   `yaml:"host_contains"`
-	URIPrefixes        []string `yaml:"uri_prefixes"`
-	TargetScheme       string   `yaml:"target_scheme"`
-	TargetHost         string   `yaml:"target_host"`
-	TargetURL          string   `yaml:"target_url"`
-	UseOriginalHost    bool     `yaml:"use_original_host"`
-	InsecureSkipVerify bool     `yaml:"insecure_skip_verify"`
-	SetForwardedProto  bool     `yaml:"set_forwarded_proto"`
-	StripPrefix        string   `yaml:"strip_prefix"`
+	Name            string `yaml:"name"`
+	HostContains    string `yaml:"host_contains"`
+	TLSTermination  bool   `yaml:"tls_termination"`
+	TargetHost      string `yaml:"target_host"`
+	UseOriginalHost bool   `yaml:"use_original_host"`
+	RedirectURL     string `yaml:"redirect_url"`
 }
 
 type DefaultConfig struct {
@@ -257,57 +253,42 @@ func handleHTTP(w http.ResponseWriter, req *http.Request) {
 	for _, route := range cfg.Routes {
 		// Check host-based routes
 		if route.HostContains != "" && strings.Contains(req.Host, route.HostContains) {
+			// Redirect if redirect_url is set
+			if route.RedirectURL != "" {
+				logger.Printf("Redirecting: %s %s%s from %s to %s (301)", req.Method, req.Host, req.RequestURI, req.RemoteAddr, route.RedirectURL)
+				http.Redirect(w, req, route.RedirectURL, http.StatusMovedPermanently)
+				return
+			}
+
+			scheme := "https"
+			if route.TLSTermination {
+				scheme = "http"
+				req.Header.Set("X-Forwarded-Proto", "https")
+			}
+
 			var targetURL *url.URL
 			if route.UseOriginalHost {
 				targetURL = &url.URL{
-					Scheme: route.TargetScheme,
+					Scheme: scheme,
 					Host:   req.Host,
 				}
 			} else {
 				targetURL = &url.URL{
-					Scheme: route.TargetScheme,
+					Scheme: scheme,
 					Host:   route.TargetHost,
 				}
 			}
 			logger.Printf("Accepted: %s %s%s from %s, redirecting to %s", req.Method, req.Host, req.RequestURI, req.RemoteAddr, targetURL.Host)
 
 			proxy := httputil.NewSingleHostReverseProxy(targetURL)
-			if route.InsecureSkipVerify {
-				proxy.Transport = &http.Transport{
-					TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-				}
+			proxy.Transport = &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 			}
-			if route.SetForwardedProto {
-				req.Header.Set("X-Forwarded-Proto", "https")
-			}
+
 			proxy.ServeHTTP(w, req)
 			return
 		}
 
-		// Check URI prefix-based routes
-		if len(route.URIPrefixes) > 0 {
-			for _, prefix := range route.URIPrefixes {
-				if strings.HasPrefix(req.RequestURI, prefix) {
-					targetURL, _ := url.Parse(route.TargetURL)
-					proxy := httputil.NewSingleHostReverseProxy(targetURL)
-					logger.Printf("Accepted: %s %s%s from %s, redirecting to %s", req.Method, req.Host, req.RequestURI, req.RemoteAddr, targetURL.Host)
-
-					if route.InsecureSkipVerify {
-						proxy.Transport = &http.Transport{
-							TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-						}
-					}
-
-					// Strip prefix if configured
-					if route.StripPrefix != "" {
-						req.URL.Path = strings.TrimPrefix(req.URL.Path, route.StripPrefix)
-					}
-
-					proxy.ServeHTTP(w, req)
-					return
-				}
-			}
-		}
 	}
 
 	// No route matched - deny request
