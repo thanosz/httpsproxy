@@ -42,6 +42,7 @@ import (
 	"syscall"
 	"time"
 
+	proxyproto "github.com/pires/go-proxyproto"
 	"gopkg.in/yaml.v3"
 )
 
@@ -128,13 +129,38 @@ func startHTTPSServer(handler http.Handler, cfg Config) *http.Server {
 
 	logger.Printf("Starting HTTPS server on %s", serverAddr)
 	go func() {
-		if err := server.ListenAndServeTLS(cfg.Server.CertFile, cfg.Server.KeyFile); err != nil && err != http.ErrServerClosed {
+		ln, err := net.Listen("tcp", serverAddr)
+		if err != nil {
+			logger.Printf("HTTPS server listen error: %v", err)
+			os.Exit(1)
+		}
+
+		ln = &proxyproto.Listener{Listener: ln}
+
+		tlsCfg, err := tlsConfig(cfg)
+		if err != nil {
+			logger.Printf("HTTPS server TLS config error: %v", err)
+			os.Exit(1)
+		}
+
+		if err := server.Serve(tls.NewListener(ln, tlsCfg)); err != nil && err != http.ErrServerClosed {
 			logger.Printf("HTTPS server error: %v", err)
 			os.Exit(1)
 		}
 	}()
 
 	return server
+}
+
+func tlsConfig(cfg Config) (*tls.Config, error) {
+	cert, err := tls.LoadX509KeyPair(cfg.Server.CertFile, cfg.Server.KeyFile)
+	if err != nil {
+		return nil, err
+	}
+	return &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		NextProtos:   []string{"http/1.1"},
+	}, nil
 }
 
 func stopHTTPSServer(server *http.Server) error {
