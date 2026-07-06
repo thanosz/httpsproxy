@@ -30,6 +30,7 @@ routes:
     host_contains: "app.example.com"
     tls_termination: true   # backend speaks plain HTTP
     target_host: "192.168.1.10:8080"
+    send_proxy_protocol: true   # backend must support PROXY protocol
 
   # Host-based 301 redirect
   - name: "old-app"
