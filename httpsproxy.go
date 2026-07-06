@@ -46,6 +46,25 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// proxyProtoDialer wraps a net.Conn to write a PROXY protocol header immediately
+// after the connection is established, advertising the original client address.
+type proxyProtoDialer struct {
+	clientAddr net.Addr
+}
+
+func (d *proxyProtoDialer) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	conn, err := (&net.Dialer{}).DialContext(ctx, network, addr)
+	if err != nil {
+		return nil, err
+	}
+	hdr := proxyproto.HeaderProxyFromAddrs(2, d.clientAddr, conn.RemoteAddr())
+	if _, err := hdr.WriteTo(conn); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	return conn, nil
+}
+
 var version = "3.0.0"
 var logger *log.Logger
 var config Config
@@ -79,12 +98,13 @@ type ProxyConfig struct {
 }
 
 type RouteConfig struct {
-	Name            string `yaml:"name"`
-	HostContains    string `yaml:"host_contains"`
-	TLSTermination  bool   `yaml:"tls_termination"`
-	TargetHost      string `yaml:"target_host"`
-	UseOriginalHost bool   `yaml:"use_original_host"`
-	RedirectURL     string `yaml:"redirect_url"`
+	Name              string `yaml:"name"`
+	HostContains      string `yaml:"host_contains"`
+	TLSTermination    bool   `yaml:"tls_termination"`
+	TargetHost        string `yaml:"target_host"`
+	UseOriginalHost   bool   `yaml:"use_original_host"`
+	RedirectURL       string `yaml:"redirect_url"`
+	SendProxyProtocol bool   `yaml:"send_proxy_protocol"`
 }
 
 type DefaultConfig struct {
@@ -304,13 +324,18 @@ func handleHTTP(w http.ResponseWriter, req *http.Request) {
 					Host:   route.TargetHost,
 				}
 			}
-			logger.Printf("Accepted: %s %s%s from %s, redirecting to %s", req.Method, req.Host, req.RequestURI, req.RemoteAddr, targetURL.Host)
+			logger.Printf("Accepted: %s %s%s from %s, redirecting to %s (with proxyprot:%v)", req.Method, req.Host, req.RequestURI, req.RemoteAddr, targetURL.Host, route.SendProxyProtocol)
 
 			proxy := httputil.NewSingleHostReverseProxy(targetURL)
-			proxy.Transport = &http.Transport{
+			transport := &http.Transport{
 				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 			}
-
+			if route.SendProxyProtocol {
+				if tcpAddr, err := net.ResolveTCPAddr("tcp", req.RemoteAddr); err == nil {
+					transport.DialContext = (&proxyProtoDialer{clientAddr: tcpAddr}).DialContext
+				}
+			}
+			proxy.Transport = transport
 			proxy.ServeHTTP(w, req)
 			return
 		}
