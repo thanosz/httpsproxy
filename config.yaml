@@ -35,8 +35,7 @@ routes:
   # Host-based 301 redirect
   - name: "old-app"
     host_contains: "old.example.com"
-    redirect_url: "https://app.example.com"
-    redirect_status: 301
+    redirect_url: "https://app.example.com"   # always issues a 301 Moved Permanently
 
   # Host-based proxy with original host passthrough
   - name: "passthrough"
@@ -56,5 +55,19 @@ default:
   denied_status: 403
   # Message for denied requests
   denied_message: "Forbidden"
+
+# Brute-force detection and IP banning
+# Two independent rules — TLS errors and HTTP request rate are counted
+# separately and never combined. All fields are optional.
+#security:
+#  ban_duration_seconds: 300     # how long a banned IP stays blocked (seconds)
+#
+#  # Rule 1 — TLS errors (port scanners, cipher probes)
+#  tls_window_seconds: 5        # time window for the TLS error counter
+#  tls_ban_threshold: 3          # ban after this many failed TLS handshakes in the window (0 = disabled)
+#
+#  # Rule 2 — HTTP error rate (scanners, floods — only non-200 responses count)
+#  http_ban_threshold: 0         # ban after this many non-200 responses in http_window_seconds (0 = disabled)
+#  http_window_seconds: 10       # time window for the error-rate counter
 
 # Made with Bob
