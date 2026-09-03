@@ -102,12 +102,9 @@ const (
 type ipState struct {
 	mu sync.Mutex
 
-	// windowStart marks the beginning of the current counting window.
-	// Both counters reset together when the window expires.
-	windowStart time.Time
-
-	// tlsErrors counts failed TLS handshakes in the current window.
-	tlsErrors int
+	// recentTLSErrors holds timestamps of failed TLS handshakes for the
+	// sliding TLS window (only used when tls_ban_threshold > 0).
+	recentTLSErrors []time.Time
 
 	// recentRequests holds timestamps of non-200 HTTP responses for the
 	// rate-limit sub-window (only used when http_ban_threshold > 0).
@@ -184,10 +181,9 @@ type SecurityConfig struct {
 	// Default: 300 (5 minutes).
 	BanDurationSeconds int `yaml:"ban_duration_seconds"`
 
-	// WindowSeconds is the shared outer rolling time window. When it expires,
-	// both the TLS-error counter and the recentRequests slice are reset.
+	// TLSWindowSeconds is the sliding time window for the TLS error rule.
 	// Default: 5 seconds.
-	WindowSeconds int `yaml:"tls_window_seconds"`
+	TLSWindowSeconds int `yaml:"tls_window_seconds"`
 
 	// TLSBanThreshold is the number of failed TLS handshakes within
 	// tls_window_seconds that triggers a ban.
@@ -212,8 +208,8 @@ func (s *SecurityConfig) applyDefaults() {
 	if s.BanDurationSeconds == 0 {
 		s.BanDurationSeconds = 300
 	}
-	if s.WindowSeconds == 0 {
-		s.WindowSeconds = 5
+	if s.TLSWindowSeconds == 0 {
+		s.TLSWindowSeconds = 5
 	}
 
 	// RateLimitThreshold defaults to 0 (disabled) intentionally.
@@ -260,7 +256,7 @@ func setConfig(cfg Config) {
 // and stores a new one. LoadOrStore guarantees only one *ipState exists per IP
 // even under concurrent first-access from multiple goroutines.
 func getOrCreateState(ip string) *ipState {
-	s := &ipState{windowStart: time.Now()}
+	s := &ipState{}
 	v, _ := banTracker.LoadOrStore(ip, s)
 	return v.(*ipState)
 }
@@ -720,13 +716,6 @@ func recordEvent(ip string, ev eventType, r *http.Request, statusCode int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Reset all counters when the window expires.
-	if now.Sub(s.windowStart) > time.Duration(cfg.WindowSeconds)*time.Second {
-		s.tlsErrors = 0
-		s.recentRequests = nil
-		s.windowStart = now
-	}
-
 	// Already banned — nothing more to do.
 	if now.Before(s.bannedUntil) {
 		return
@@ -738,10 +727,16 @@ func recordEvent(ip string, ev eventType, r *http.Request, statusCode int) {
 		if cfg.TLSBanThreshold <= 0 {
 			return
 		}
-		// Each failed TLS handshake increments the TLS counter independently.
-		// Real browsers never produce TLS errors; only scanners and probes do.
-		s.tlsErrors++
-		if s.tlsErrors >= cfg.TLSBanThreshold {
+		// Prune timestamps outside the TLS sliding window, then append now.
+		cutoff := now.Add(-time.Duration(cfg.TLSWindowSeconds) * time.Second)
+		filtered := s.recentTLSErrors[:0]
+		for _, t := range s.recentTLSErrors {
+			if t.After(cutoff) {
+				filtered = append(filtered, t)
+			}
+		}
+		s.recentTLSErrors = append(filtered, now)
+		if len(s.recentTLSErrors) >= cfg.TLSBanThreshold {
 			ban(s, ip, "tls-errors", r, cfg)
 		}
 
@@ -784,11 +779,19 @@ func startBanSweeper(interval time.Duration) {
 	defer ticker.Stop()
 	for range ticker.C {
 		cfg := getConfig().Security
-		cutoff := time.Now().Add(-time.Duration(cfg.WindowSeconds) * time.Second)
+		cutoff := time.Now().Add(-time.Duration(cfg.TLSWindowSeconds) * time.Second)
 		banTracker.Range(func(k, v any) bool {
 			s := v.(*ipState)
 			s.mu.Lock()
-			stale := !time.Now().Before(s.bannedUntil) && s.windowStart.Before(cutoff)
+			lastTLS := time.Time{}
+			if len(s.recentTLSErrors) > 0 {
+				lastTLS = s.recentTLSErrors[len(s.recentTLSErrors)-1]
+			}
+			lastReq := time.Time{}
+			if len(s.recentRequests) > 0 {
+				lastReq = s.recentRequests[len(s.recentRequests)-1]
+			}
+			stale := !time.Now().Before(s.bannedUntil) && lastTLS.Before(cutoff) && lastReq.Before(cutoff)
 			s.mu.Unlock()
 			if stale {
 				banTracker.Delete(k)
