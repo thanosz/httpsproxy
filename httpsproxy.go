@@ -825,9 +825,12 @@ type tlsErrorWriter struct {
 // "TLS handshake error from " are parsed to extract the source IP which is
 // then recorded as an eventTLSError. All bytes are always forwarded to the
 // underlying syslog writer regardless of whether parsing succeeds.
+// tls: unknown certificate is excluded from the recordEvent as we see it valid to
+// to use self-signed certs (todo: add global config)
 func (w *tlsErrorWriter) Write(p []byte) (int, error) {
 	s := string(p)
-	if strings.Contains(s, "TLS handshake error from ") {
+	if strings.Contains(s, "TLS handshake error from ") &&
+		!strings.Contains(s, "tls: unknown certificate") {
 		// The line format is:
 		//   "http: TLS handshake error from <ip>:<port>: <reason>\n"
 		// We locate "from ", read up to the next ": " to get "ip:port",
