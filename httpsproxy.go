@@ -825,12 +825,21 @@ type tlsErrorWriter struct {
 // "TLS handshake error from " are parsed to extract the source IP which is
 // then recorded as an eventTLSError. All bytes are always forwarded to the
 // underlying syslog writer regardless of whether parsing succeeds.
-// tls: unknown certificate is excluded from the recordEvent as we see it valid to
-// to use self-signed certs (todo: add global config)
+// Client-side certificate rejections are excluded from the recordEvent as we
+// see it valid to use self-signed certs or serve hosts missing from the
+// certificate SANs (todo: add global config). The peer sends one of these
+// alerts depending on its TLS library:
+//   - "tls: unknown certificate" (certificate_unknown) and
+//     "tls: unknown certificate authority" (unknown_ca, matched by the same
+//     prefix): OpenSSL/BoringSSL-style clients.
+//   - "tls: bad certificate" (bad_certificate): Go clients, which send it for
+//     every server certificate verification failure (untrusted CA, hostname
+//     mismatch, expired).
 func (w *tlsErrorWriter) Write(p []byte) (int, error) {
 	s := string(p)
 	if strings.Contains(s, "TLS handshake error from ") &&
-		!strings.Contains(s, "tls: unknown certificate") {
+		!strings.Contains(s, "tls: unknown certificate") &&
+		!strings.Contains(s, "tls: bad certificate") {
 		// The line format is:
 		//   "http: TLS handshake error from <ip>:<port>: <reason>\n"
 		// We locate "from ", read up to the next ": " to get "ip:port",
